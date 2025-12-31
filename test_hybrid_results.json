@@ -1,0 +1,22 @@
+[
+  {
+    "method": "embedding",
+    "time": 50.59508800506592,
+    "candidates": 5,
+    "top_score": 0.6292,
+    "success": true
+  },
+  {
+    "method": "llm",
+    "time": 47.16155505180359,
+    "candidates": 5,
+    "top_score": 0.95,
+    "success": true
+  },
+  {
+    "method": "hybrid",
+    "time": 60.0645067691803,
+    "success": false,
+    "error": "HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=60)"
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "id": "job_001",
+  "title": "Senior Python Developer",
+  "description": "We are looking for an experienced Python developer to join our team and work on AI/ML projects.",
+  "requirements": "5+ years of Python development experience, strong knowledge of FastAPI, Django, or Flask. Experience with machine learning libraries (TensorFlow, PyTorch). Good understanding of REST APIs and microservices architecture.",
+  "tech_stack": ["Python", "FastAPI", "PostgreSQL", "Docker", "Kubernetes", "TensorFlow", "PyTorch", "AWS"]
+}

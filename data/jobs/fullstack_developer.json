@@ -1,0 +1,7 @@
+{
+  "id": "job_002",
+  "title": "Full Stack Developer",
+  "description": "Join our development team to build modern web applications using React and Node.js.",
+  "requirements": "3+ years experience in web development. Strong skills in JavaScript/TypeScript, React, Node.js. Experience with RESTful APIs and databases (MongoDB, PostgreSQL). Knowledge of Docker and CI/CD pipelines.",
+  "tech_stack": ["GO", "TypeScript", "React", "Node.js", "Express", "MongoDB", "PostgreSQL", "Docker", "Git"]
+}

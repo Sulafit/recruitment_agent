@@ -1,0 +1,14 @@
+{
+  "id": "2",
+  "title": "Data software engineer",
+  "description": "Python, Nlp, Fastapi, SQL, Postgresql",
+  "requirements": "Developing services on fastapi",
+  "tech_stack": [
+    "Python",
+    "Nlp",
+    "Fastapi",
+    "SQL",
+    "Postgresql",
+    "Docker"
+  ]
+}
