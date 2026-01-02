@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import List, Optional, Dict
+from pydantic import BaseModel, field_validator
+from typing import List, Optional, Dict, Union
 
 
 class WorkExperience(BaseModel):
@@ -18,8 +18,16 @@ class Education(BaseModel):
     degree: Optional[str] = None
     institution: str
     field_of_study: Optional[str] = None
-    graduation_year: Optional[str] = None
+    graduation_year: Optional[Union[str, int]] = None
     description: Optional[str] = None
+
+    @field_validator('graduation_year')
+    @classmethod
+    def convert_year_to_string(cls, v):
+        """Конвертирует год в строку, если пришло число"""
+        if v is not None and isinstance(v, int):
+            return str(v)
+        return v
 
 
 class Resume(BaseModel):
@@ -49,6 +57,30 @@ class Resume(BaseModel):
     languages: List[str] = []
     certifications: List[str] = []
     projects: List[str] = []
+
+    @field_validator('projects', mode='before')
+    @classmethod
+    def convert_projects_to_strings(cls, v):
+        """Конвертирует проекты из словарей в строки, если необходимо"""
+        if not isinstance(v, list):
+            return v
+
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                # Конвертируем словарь проекта в строку
+                name = item.get('name', 'Unknown Project')
+                description = item.get('description', '')
+                if description:
+                    result.append(f"{name}: {description}")
+                else:
+                    result.append(name)
+            elif isinstance(item, str):
+                result.append(item)
+            else:
+                result.append(str(item))
+
+        return result
 
 
 class Job(BaseModel):

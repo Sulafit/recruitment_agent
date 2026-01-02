@@ -37,6 +37,15 @@ wheels/
 # Data
 data/resumes/*
 !data/resumes/.gitkeep
+data/resumes_parsed/*
+!data/resumes_parsed/.gitkeep
+
+# Test files
+test_*.py
+!test_api.py
+!test_hybrid_method.py
+!test_fetch_resumes.py
+test_*.json
 
 # Logs
 *.log

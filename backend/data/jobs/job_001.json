@@ -1,0 +1,12 @@
+{
+  "id": "job_001",
+  "title": "System analyst",
+  "description": "Gathering requirements, constructiing documantation ",
+  "requirements": "System analysisi",
+  "tech_stack": [
+    "SQL",
+    "ERD",
+    "UML",
+    "BPMN"
+  ]
+}

@@ -251,16 +251,105 @@ async def list_resumes():
 
 @app.post("/fetch-resumes")
 async def fetch_resumes_from_email(
-    max_emails: int = Query(5, description="Maximum number of emails to process")
+    max_emails: int = Query(5, description="Maximum number of emails to process"),
+    precompute_embeddings: bool = Query(True, description="Automatically generate embeddings for new resumes")
 ):
     """
     Fetch new resumes from email
 
     Only processes the most recent emails to avoid timeout.
     Looks for attachments with extensions: .pdf, .doc, .docx, .txt, .png, .jpg, .jpeg
+
+    If precompute_embeddings=True (default), automatically generates embeddings
+    for new resumes to ensure fast search performance.
     """
     try:
         saved_files = email_client.fetch_resumes(unread_only=True, max_emails=max_emails)
+
+        if not saved_files:
+            return {
+                "message": "No new resumes found",
+                "files": []
+            }
+
+        # Precompute embeddings for new resumes if requested
+        if precompute_embeddings and saved_files:
+            logger.info(f"Precomputing embeddings for {len(saved_files)} new resumes...")
+            try:
+                # Load and process new resumes
+                new_resumes = []
+                for filepath in saved_files:
+                    try:
+                        filename = os.path.basename(filepath)
+                        parsed_data = resume_parser.parse_file(filepath)
+
+                        resume = Resume(
+                            id=filename,
+                            raw_text=parsed_data['raw_text'],
+                            name=parsed_data.get('name'),
+                            email=parsed_data.get('email'),
+                            phone=parsed_data.get('phone'),
+                            location=parsed_data.get('location'),
+                            summary=parsed_data.get('summary'),
+                            skills=parsed_data.get('skills', []),
+                            years_of_experience=parsed_data.get('years_of_experience'),
+                            work_experience=parsed_data.get('work_experience', []),
+                            experience=parsed_data.get('experience', ''),
+                            education_details=parsed_data.get('education_details', []),
+                            education=parsed_data.get('education', ''),
+                            languages=parsed_data.get('languages', []),
+                            certifications=parsed_data.get('certifications', []),
+                            projects=parsed_data.get('projects', [])
+                        )
+                        new_resumes.append(resume)
+                    except Exception as e:
+                        logger.error(f"Error parsing new resume {filepath}: {e}")
+
+                # Generate embeddings in batch for all new resumes
+                if new_resumes:
+                    from .matching.dual_embedding_matcher import DualEmbeddingMatcher
+                    temp_matcher = DualEmbeddingMatcher()
+
+                    # Prepare texts for batch processing
+                    skills_texts = []
+                    exp_texts = []
+
+                    for resume in new_resumes:
+                        resume_skills = resume.skills or []
+                        resume_skills_text = temp_matcher._format_skills_text(resume_skills)
+                        skills_texts.append(resume_skills_text)
+
+                        # Convert work_experience Pydantic models to dicts
+                        resume_work_exp = resume.work_experience or []
+                        resume_work_exp_dicts = [exp.model_dump() if hasattr(exp, 'model_dump') else exp for exp in resume_work_exp]
+                        resume_exp_text = temp_matcher._format_experience_text(resume_work_exp_dicts)
+                        exp_texts.append(resume_exp_text)
+
+                    # Generate embeddings in batch
+                    logger.info(f"Generating embeddings for {len(new_resumes)} resumes...")
+                    skills_embeddings = temp_matcher.embedding_client.get_embeddings_batch(skills_texts)
+                    exp_embeddings = temp_matcher.embedding_client.get_embeddings_batch(exp_texts)
+
+                    # Cache all embeddings
+                    for idx, resume in enumerate(new_resumes):
+                        temp_matcher.cache.set(
+                            resume.id,
+                            resume.model_dump(),
+                            skills_embeddings[idx],
+                            exp_embeddings[idx]
+                        )
+
+                    logger.info(f"✓ Cached embeddings for {len(new_resumes)} new resumes")
+
+                    return {
+                        "message": f"Fetched {len(saved_files)} new resumes and precomputed embeddings",
+                        "files": saved_files,
+                        "embeddings_cached": len(new_resumes)
+                    }
+
+            except Exception as e:
+                logger.warning(f"Failed to precompute embeddings: {e}. Search will be slower on first request.")
+
         return {
             "message": f"Fetched {len(saved_files)} new resumes",
             "files": saved_files

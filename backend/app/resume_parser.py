@@ -9,21 +9,32 @@ from typing import Dict, List
 import logging
 from .llm_resume_extractor import LLMResumeExtractor
 import subprocess
+import hashlib
+import json
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class ResumeParser:
-    def __init__(self, use_llm: bool = True):
+    def __init__(self, use_llm: bool = True, cache_dir: str = "data/resumes_parsed"):
         """
         Инициализация парсера резюме
 
         Args:
             use_llm: Если True, использует LLM для извлечения данных (рекомендуется).
                     Если False, использует старый regex-based метод.
+            cache_dir: Директория для кэширования распарсенных резюме в JSON формате.
         """
         self.use_llm = use_llm
+        self.cache_dir = cache_dir
+
+        # Создаем директорию для кэша если её нет
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+            logger.info(f"Resume cache directory: {cache_dir}")
+
         if use_llm:
             try:
                 self.llm_extractor = LLMResumeExtractor()
@@ -59,10 +70,20 @@ class ResumeParser:
         """
         Parse resume file and extract structured information
 
+        Использует кэш если файл уже был распарсен.
         Использует LLM для извлечения данных (если use_llm=True),
-        иначе использует regex-based метод
+        иначе использует regex-based метод.
         """
         logger.info(f"Parsing file: {file_path}")
+
+        # 1. Проверяем кэш
+        if self.cache_dir:
+            cached_data = self._load_from_cache(file_path)
+            if cached_data:
+                logger.info(f"✓ Cache HIT: Loaded from cache in <1ms")
+                return cached_data
+            else:
+                logger.info(f"✗ Cache MISS: Will parse and cache")
 
         # Extract text based on file type
         text = self._extract_text(file_path)
@@ -114,6 +135,10 @@ class ResumeParser:
             }
 
             logger.info(f"Regex extracted {len(result['skills'])} skills from resume")
+
+        # 2. Сохраняем в кэш
+        if self.cache_dir:
+            self._save_to_cache(file_path, result)
 
         return result
 
@@ -312,3 +337,109 @@ class ResumeParser:
         email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
         match = re.search(email_pattern, text)
         return match.group(0) if match else ""
+
+    # ========== Cache Methods ==========
+
+    def _get_file_hash(self, file_path: str) -> str:
+        """
+        Получить MD5 хэш файла для проверки изменений
+
+        Args:
+            file_path: Путь к файлу резюме
+
+        Returns:
+            MD5 хэш файла в виде hex строки
+        """
+        hash_md5 = hashlib.md5()
+        try:
+            with open(file_path, 'rb') as f:
+                # Читаем файл блоками для эффективности с большими файлами
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_md5.update(chunk)
+            return hash_md5.hexdigest()
+        except Exception as e:
+            logger.error(f"Error calculating hash for {file_path}: {e}")
+            return ""
+
+    def _get_cache_path(self, file_path: str) -> str:
+        """
+        Получить путь к кэш-файлу для данного резюме
+
+        Args:
+            file_path: Путь к исходному файлу резюме
+
+        Returns:
+            Путь к JSON файлу кэша
+        """
+        file_name = os.path.basename(file_path)
+        # Убираем расширение и добавляем .json
+        cache_name = os.path.splitext(file_name)[0] + '.json'
+        return os.path.join(self.cache_dir, cache_name)
+
+    def _load_from_cache(self, file_path: str) -> Dict:
+        """
+        Загрузить распарсенные данные из кэша если они актуальны
+
+        Args:
+            file_path: Путь к исходному файлу резюме
+
+        Returns:
+            Словарь с распарсенными данными или None если кэш отсутствует/устарел
+        """
+        cache_path = self._get_cache_path(file_path)
+
+        # Проверяем существование кэш-файла
+        if not os.path.exists(cache_path):
+            return None
+
+        try:
+            # Загружаем кэш
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+
+            # Проверяем актуальность кэша (сравниваем хэш исходного файла)
+            current_hash = self._get_file_hash(file_path)
+            cached_hash = cached.get('file_hash', '')
+
+            if current_hash != cached_hash:
+                logger.info(f"Cache outdated (file modified): {os.path.basename(file_path)}")
+                return None
+
+            # Кэш актуален!
+            return cached.get('data')
+
+        except Exception as e:
+            logger.warning(f"Error loading cache for {file_path}: {e}")
+            return None
+
+    def _save_to_cache(self, file_path: str, parsed_data: Dict) -> None:
+        """
+        Сохранить распарсенные данные в кэш
+
+        Args:
+            file_path: Путь к исходному файлу резюме
+            parsed_data: Распарсенные данные для сохранения
+        """
+        cache_path = self._get_cache_path(file_path)
+
+        try:
+            # Получаем хэш файла
+            file_hash = self._get_file_hash(file_path)
+
+            # Формируем данные для кэша
+            cache_data = {
+                'file_hash': file_hash,
+                'file_name': os.path.basename(file_path),
+                'parsed_at': datetime.now().isoformat(),
+                'parser_version': '2.0',  # Версия парсера (для будущей совместимости)
+                'data': parsed_data
+            }
+
+            # Сохраняем в JSON
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"✓ Saved to cache: {os.path.basename(cache_path)}")
+
+        except Exception as e:
+            logger.error(f"Error saving cache for {file_path}: {e}")

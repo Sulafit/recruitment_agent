@@ -10,16 +10,15 @@ class Settings(BaseSettings):
     imap_port: int = 993
 
     # API Keys
-    hf_token: str  # Required for Qwen embeddings via HuggingFace Inference API
     mistral_api_key: str
-    mistral_model: str = "mistral-large-2512"
+    mistral_model: str = "mistral-small-2506"
 
     # Embedding Model
-    qwen_model: str = "Qwen/Qwen3-Embedding-0.6B"  # HuggingFace model for embeddings
+    qwen_model: str = "BAAI/bge-m3"  # BGE-M3 model for embeddings (runs locally via sentence-transformers)
 
     # Paths
-    resumes_dir: str = "data/resumes"
-    jobs_dir: str = "data/jobs"
+    resumes_dir: str = "backend/data/resumes"
+    jobs_dir: str = "backend/data/jobs"
 
     class Config:
         env_file = ".env"

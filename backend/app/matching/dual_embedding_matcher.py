@@ -2,6 +2,7 @@ import numpy as np
 from typing import List, Dict
 import re
 from .qwen_embedding_client import QwenEmbeddingClient
+from .embedding_cache import EmbeddingCache
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -22,9 +23,10 @@ class DualEmbeddingMatcher:
     """
 
     def __init__(self):
-        """Initialize Qwen embedding client"""
+        """Initialize Qwen embedding client and cache"""
         self.embedding_client = QwenEmbeddingClient()
-        logger.info("Initialized DualEmbeddingMatcher with Qwen embeddings")
+        self.cache = EmbeddingCache()
+        logger.info("Initialized DualEmbeddingMatcher with Qwen embeddings and cache")
 
     def cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
@@ -229,19 +231,78 @@ class DualEmbeddingMatcher:
 
         # Step 3: Process each resume
         results = []
+        cache_hits = 0
+        cache_misses = 0
+
+        # First pass: identify which resumes need embeddings (cache misses)
+        resumes_needing_embeddings = []
+        resume_embeddings = {}  # Store embeddings by resume_id
+
         for i, resume in enumerate(resumes):
-            try:
+            resume_id = resume.get('id', f'unknown_{i}')
+
+            # Try to get embeddings from cache
+            cached_embeddings = self.cache.get(resume_id, resume)
+
+            if cached_embeddings:
+                # Cache hit - store for later use
+                resume_embeddings[resume_id] = cached_embeddings
+                cache_hits += 1
+            else:
+                # Cache miss - mark for batch processing
+                cache_misses += 1
+                resumes_needing_embeddings.append((resume_id, resume))
+
+        # Batch process cache misses (if any)
+        if resumes_needing_embeddings:
+            logger.info(f"[Dual Embedding] Processing {len(resumes_needing_embeddings)} uncached resumes in batch mode")
+
+            # Prepare all texts for batch embedding
+            skills_texts = []
+            exp_texts = []
+
+            for resume_id, resume in resumes_needing_embeddings:
                 # Format resume skills
                 resume_skills = resume.get('skills', [])
                 resume_skills_text = self._format_skills_text(resume_skills)
+                skills_texts.append(resume_skills_text)
 
                 # Format resume experience from work_experience structured data
                 resume_work_exp = resume.get('work_experience', [])
                 resume_exp_text = self._format_experience_text(resume_work_exp)
+                exp_texts.append(resume_exp_text)
 
-                # Get embeddings for resume
-                resume_skills_emb = self.embedding_client.get_embedding(resume_skills_text)
-                resume_exp_emb = self.embedding_client.get_embedding(resume_exp_text)
+            # Get all embeddings in two batch calls (much faster!)
+            skills_embeddings = self.embedding_client.get_embeddings_batch(skills_texts)
+            exp_embeddings = self.embedding_client.get_embeddings_batch(exp_texts)
+
+            # Cache all new embeddings
+            for idx, (resume_id, resume) in enumerate(resumes_needing_embeddings):
+                skills_emb = skills_embeddings[idx]
+                exp_emb = exp_embeddings[idx]
+
+                # Store in memory for current processing
+                resume_embeddings[resume_id] = {
+                    'skills_embedding': skills_emb,
+                    'experience_embedding': exp_emb
+                }
+
+                # Cache for future use
+                self.cache.set(resume_id, resume, skills_emb, exp_emb)
+
+        # Now process all resumes with their embeddings
+        for i, resume in enumerate(resumes):
+            try:
+                resume_id = resume.get('id', f'unknown_{i}')
+
+                # Get embeddings (from cache or just computed)
+                embeddings = resume_embeddings.get(resume_id)
+                if not embeddings:
+                    logger.warning(f"[Dual Embedding] No embeddings found for {resume_id}, skipping")
+                    continue
+
+                resume_skills_emb = embeddings['skills_embedding']
+                resume_exp_emb = embeddings['experience_embedding']
 
                 # Calculate similarities
                 skills_sim = self.cosine_similarity(job_skills_emb, resume_skills_emb)
@@ -283,5 +344,6 @@ class DualEmbeddingMatcher:
             f"[Dual Embedding] Matched {len(results)} candidates, "
             f"returning top-5 (scores: {top_5[0]['score']:.3f} - {top_5[-1]['score']:.3f})"
         )
+        logger.info(f"[Dual Embedding Cache] Hits: {cache_hits}, Misses: {cache_misses}, Hit Rate: {cache_hits/(cache_hits+cache_misses)*100:.1f}%")
 
         return top_5

@@ -1,9 +1,8 @@
-from huggingface_hub import InferenceClient
+from sentence_transformers import SentenceTransformer
 import numpy as np
 from typing import List
 from ..config import settings
 import logging
-import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -11,128 +10,114 @@ logger = logging.getLogger(__name__)
 
 class QwenEmbeddingClient:
     """
-    Client for Qwen3-Embedding-0.6B via HuggingFace Inference API
+    Client for BGE-M3 embedding model via sentence-transformers
 
-    Uses HF Inference API for feature extraction (embeddings).
-    Requires HF_TOKEN in environment variables.
+    Uses local BGE-M3 model for generating embeddings.
+    Supports multilingual text and various embedding tasks.
     """
 
     def __init__(self):
-        """Initialize HuggingFace Inference client"""
+        """Initialize BGE-M3 model"""
         try:
-            self.model = "Qwen/Qwen3-Embedding-0.6B"
-            # Initialize client with model - will use the new HuggingFace API automatically
-            self.client = InferenceClient(
-                model=self.model,
-                token=settings.hf_token
-            )
-            logger.info(f"Initialized Qwen embedding client with model: {self.model}")
+            self.model_name = settings.qwen_model  # Will be renamed to bge_model in config
+            # Initialize sentence-transformers model
+            # BGE-M3 runs locally, no API token needed
+            self.model = SentenceTransformer(self.model_name)
+            logger.info(f"Initialized BGE-M3 embedding model: {self.model_name}")
+            logger.info(f"Model dimension: {self.model.get_sentence_embedding_dimension()}")
         except Exception as e:
-            logger.error(f"Error initializing Qwen client: {e}")
+            logger.error(f"Error initializing BGE-M3 model: {e}")
             raise
 
     def get_embedding(self, text: str, max_retries: int = 3) -> np.ndarray:
         """
-        Get embedding for a single text using Qwen model
+        Get embedding for a single text using BGE-M3 model
 
         Args:
             text: Input text to embed
-            max_retries: Maximum number of retry attempts for API calls
+            max_retries: Not used (kept for backward compatibility)
 
         Returns:
             numpy array of embedding vector
 
         Raises:
-            Exception: If API call fails after all retries
+            Exception: If embedding generation fails
         """
         if not text or not text.strip():
             logger.warning("Empty text provided for embedding")
             # Return zero vector for empty text
-            return np.zeros(896)  # Qwen3-Embedding-0.6B dimension
+            embedding_dim = self.model.get_sentence_embedding_dimension()
+            return np.zeros(embedding_dim)
 
-        for attempt in range(max_retries):
-            try:
-                # Call HuggingFace feature extraction API
-                response = self.client.feature_extraction(text=text)
+        try:
+            # Generate embedding using sentence-transformers
+            # BGE-M3 runs locally, so no API calls or retries needed
+            embedding = self.model.encode(text, normalize_embeddings=True)
 
-                # Convert to numpy array
-                embedding = np.array(response)
+            # Convert to numpy array if not already
+            embedding = np.array(embedding)
 
-                # Validate embedding
-                if embedding.size == 0:
-                    raise ValueError("Received empty embedding from API")
+            # Validate embedding
+            if embedding.size == 0:
+                raise ValueError("Received empty embedding from model")
 
-                logger.debug(f"Successfully got embedding of dimension {embedding.shape}")
-                return embedding
+            logger.debug(f"Successfully got embedding of dimension {embedding.shape}")
+            return embedding
 
-            except Exception as e:
-                error_msg = str(e).lower()
-
-                # Check for rate limit
-                if "rate limit" in error_msg or "429" in error_msg:
-                    if attempt < max_retries - 1:
-                        wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                        logger.warning(
-                            f"Rate limit hit, retrying in {wait_time}s "
-                            f"(attempt {attempt + 1}/{max_retries})"
-                        )
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        logger.error("Rate limit exceeded, max retries reached")
-                        raise Exception("HuggingFace API rate limit exceeded") from e
-
-                # Check for other API errors
-                elif "api" in error_msg or "inference" in error_msg:
-                    if attempt < max_retries - 1:
-                        wait_time = 2 ** attempt
-                        logger.warning(
-                            f"API error, retrying in {wait_time}s "
-                            f"(attempt {attempt + 1}/{max_retries}): {e}"
-                        )
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        logger.error(f"API error after {max_retries} attempts: {e}")
-                        raise Exception("HuggingFace API unavailable") from e
-
-                # For other errors, fail immediately
-                else:
-                    logger.error(f"Error getting embedding: {e}")
-                    raise
-
-        # Should not reach here
-        raise Exception("Failed to get embedding after all retries")
+        except Exception as e:
+            logger.error(f"Error getting embedding: {e}")
+            raise
 
     def get_embeddings_batch(self, texts: List[str], max_retries: int = 3) -> List[np.ndarray]:
         """
-        Get embeddings for multiple texts
+        Get embeddings for multiple texts using BGE-M3
 
-        Currently processes sequentially. Could be optimized with batch API calls.
+        Uses batch encoding for better performance.
 
         Args:
             texts: List of texts to embed
-            max_retries: Maximum number of retry attempts per text
+            max_retries: Not used (kept for backward compatibility)
 
         Returns:
             List of numpy arrays (one embedding per text)
         """
-        embeddings = []
-
         logger.info(f"Getting embeddings for {len(texts)} texts")
 
-        for i, text in enumerate(texts):
-            try:
-                embedding = self.get_embedding(text, max_retries=max_retries)
-                embeddings.append(embedding)
+        try:
+            # Process all texts in batch for better performance
+            # sentence-transformers handles batching internally
+            embeddings = self.model.encode(
+                texts,
+                normalize_embeddings=True,
+                show_progress_bar=len(texts) > 10,
+                batch_size=32
+            )
 
-                if (i + 1) % 10 == 0:
-                    logger.info(f"Processed {i + 1}/{len(texts)} embeddings")
+            # Convert to list of numpy arrays
+            embeddings_list = [np.array(emb) for emb in embeddings]
 
-            except Exception as e:
-                logger.error(f"Error getting embedding for text {i}: {e}")
-                # Append zero vector on error to maintain list alignment
-                embeddings.append(np.zeros(896))
+            logger.info(f"Successfully got {len(embeddings_list)} embeddings")
+            return embeddings_list
 
-        logger.info(f"Successfully got {len(embeddings)} embeddings")
-        return embeddings
+        except Exception as e:
+            logger.error(f"Error getting batch embeddings: {e}")
+            # Fallback to sequential processing on error
+            logger.warning("Falling back to sequential processing")
+            embeddings = []
+            embedding_dim = self.model.get_sentence_embedding_dimension()
+
+            for i, text in enumerate(texts):
+                try:
+                    embedding = self.get_embedding(text)
+                    embeddings.append(embedding)
+
+                    if (i + 1) % 10 == 0:
+                        logger.info(f"Processed {i + 1}/{len(texts)} embeddings")
+
+                except Exception as e:
+                    logger.error(f"Error getting embedding for text {i}: {e}")
+                    # Append zero vector on error to maintain list alignment
+                    embeddings.append(np.zeros(embedding_dim))
+
+            logger.info(f"Successfully got {len(embeddings)} embeddings")
+            return embeddings
